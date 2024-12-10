@@ -519,12 +519,14 @@ function Export-LocalDeviceMDMCertificate
 
     .DESCRIPTION
     Exports the MDM certificate and private key of the local Intune enrolled device.
-    Certificate filename:      <deviceid>.pfx
+    
+    Certificate filename:      <deviceid>-MDM.pfx
+    Device ID will be Entra ID object id (if Entra ID joined) or Intune device id.
 
     .Example
-    PS C\:>Export-AADIntLocalDeviceCertificate
+    PS C\:>Export-AADIntLocalDeviceMDMCertificate
 
-    Certificate exported to   f72ad27e-5833-48d3-b1d6-00b89c429b91.pfx
+    MDM certificate exported to f72ad27e-5833-48d3-b1d6-00b89c429b91-MDM.pfx
 #>
     [CmdletBinding()]
     param()
@@ -558,6 +560,7 @@ function Export-LocalDeviceMDMCertificate
 
                     # Get also SID if exists
                     $sid = Get-ItemPropertyValue -Path "$MDMRoot\$($enrollment.PSChildName)\Protected" -Name "AcctSid" -ErrorAction SilentlyContinue
+                    break
                 }
             }
             catch
@@ -565,19 +568,26 @@ function Export-LocalDeviceMDMCertificate
     
         }
         
+        if([string]::IsNullOrEmpty($user))
+        {
+            Throw "Unable to find correct enrollment"
+        }
+
         Write-Verbose "Getting certificate $certThumbprint"
         if($user -eq "System")
         {
-            $certificate = Get-Item "Cert:\LocalMachine\$store\$certThumbprint"
+            $binCert = (Get-Item "HKLM:\SOFTWARE\Microsoft\SystemCertificates\$store\Certificates\$certThumbprint").GetValue("Blob")
         }
         else
         {
             Write-Verbose "Getting home path for user $sid"
             $userHome = Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid" -Name "ProfileImagePath"
-            $parsedCert = Parse-CertBlob -Data (Get-BinaryContent "$userHome\AppData\Roaming\Microsoft\SystemCertificates\$store\Certificates\$certThumbprint")
-
-            $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new([byte[]]($parsedCert.DER))
+            $binCert = Get-BinaryContent "$userHome\AppData\Roaming\Microsoft\SystemCertificates\$store\Certificates\$certThumbprint"
         }
+
+        $parsedCert = Parse-CertBlob -Data $binCert
+
+        $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new([byte[]]($parsedCert.DER))
 
         $paths = @(
             "$env:ALLUSERSPROFILE\Microsoft\Crypto\SystemKeys"

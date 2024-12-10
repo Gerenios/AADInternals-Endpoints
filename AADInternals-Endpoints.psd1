@@ -4,7 +4,7 @@
 	RootModule = 'AADInternals-Endpoints.psm1'
 
 	# Version number of this module.
-	ModuleVersion = '0.9.5'
+	ModuleVersion = '0.9.6'
 
 	# Supported PSEditions
 	# CompatiblePSEditions = @()
@@ -79,6 +79,7 @@ DISCLAIMER: Functionality provided through this module are not supported by Micr
         ".\ProcessTools.ps1"
         ".\ProxySettings.ps1"
         ".\PRT.ps1"
+        ".\PRT_Utils.ps1"
         ".\PTA.ps1"
         ".\SQLite.ps1"
         ".\TBRES.ps1"
@@ -99,7 +100,6 @@ DISCLAIMER: Functionality provided through this module are not supported by Micr
     "New-ADFSSelfSignedCertificates"
     "Restore-ADFSAutoRollover"
     "Update-ADFSFederationSettings"
-    "Get-ADFSConfiguration"
     
     # AccessToken_utils.ps1
     "Export-TeamsTokens"
@@ -137,10 +137,11 @@ DISCLAIMER: Functionality provided through this module are not supported by Micr
 
     # PRT.ps1
     "Get-UserPRTToken"
+    "Get-UserPRTKeysFromCloudAP"
     
     # CommonUtils_endpoints.ps1
     "New-Certificate"
-    "Get-AzureWireServerAddress"
+    "Get-AzureWireServierAddress"
     "Invoke-ScriptAs"
     "Remove-Services"
 

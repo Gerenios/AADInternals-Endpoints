@@ -2,6 +2,7 @@
 
 $source=@"
 using System;
+using System.IO;
 using System.Text;
 using System.Runtime.InteropServices;
 using System.Collections;
@@ -198,6 +199,219 @@ namespace AADInternals
             byte[] pbDerivedKey,
             uint cbDerviedKey,
             uint dwFlags);
+
+        /**
+         * Advapi32 imports
+         */
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool CryptAcquireContext(ref IntPtr hProv, string pszContainer, string pszProvider, uint dwProvType, uint dwFlags);
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern bool CryptCreateHash(IntPtr hProv, uint algId, IntPtr hKey, uint dwFlags, ref IntPtr phHash);
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern bool CryptSetHashParam(IntPtr phHash, uint dwParam, byte[] pMacInfo, uint dwFlags);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool CryptHashData(IntPtr hHash, byte[] pbData, uint dataLen, uint flags);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool CryptGetHashParam(IntPtr hHash, uint dwParam, byte[] pbData, ref uint dwDataLen, uint dwFlags);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool CryptDestroyHash(IntPtr hHash);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool CryptDestroyKey(IntPtr phKey);
+
+        [DllImport("advapi32.dll", EntryPoint = "CryptReleaseContext", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool CryptReleaseContext(IntPtr hProv, Int32 dwFlags);
+
+        [DllImport(@"advapi32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool CryptImportKey(IntPtr hProv, byte[] pbKeyData, UInt32 dwDataLen, IntPtr hPubKey, UInt32 dwFlags, ref IntPtr hKey);
+
+        /**
+         * Method for calculating the weird HMAC used with DPAPI masterkeys
+         */
+        public static byte[] getHMAC(uint algId, byte[] key, byte[] data, int maxLen = 1024)
+        {
+            // Return value
+            byte[] retVal = null;
+
+            // Create the HMAC Information blobl
+            MemoryStream hmacInfoStream = new MemoryStream(28);
+            hmacInfoStream.Write(BitConverter.GetBytes(algId), 0, 4);
+            hmacInfoStream.Write((new byte[]{
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // pInnerString
+                0x00, 0x00, 0x00, 0x00,                         // DWORD InnerString length
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // pOuterString
+                0x00, 0x00, 0x00, 0x00                          // DWORD OuterString length
+            }), 0, 24);
+            byte[] hmacInfo = hmacInfoStream.ToArray();
+
+            // Create the key blob
+            MemoryStream keyBlobStream = new MemoryStream();
+            keyBlobStream.Write((new byte[] {
+                0x08,	// PLAINTEXTKEYBLOB
+	            0x02,    // CUR_BLOB_VERSION
+                // WORD reserved
+	            0x00, 0x00,
+                // DWORD ALG_ID: RC2 (0x00006602)
+                0x02, 0x66, 0x00, 0x00,
+            }), 0, 8);
+            keyBlobStream.Write(BitConverter.GetBytes((uint)key.Length), 0, 4);
+            keyBlobStream.Write(key, 0, key.Length);
+            byte[] keyBlob = keyBlobStream.ToArray();
+
+            IntPtr hProv = new IntPtr();
+            IntPtr hKey = new IntPtr();
+            IntPtr hHash = new IntPtr();
+
+            if (CryptAcquireContext(ref hProv, null, null, 24 /*PROV_RSA_AES*/, 0xF0000000 /*CRYPT_VERIFYCONTEXT*/))
+            {
+                if (CryptImportKey(hProv, keyBlob, (uint)keyBlob.Length, IntPtr.Zero, 0x00000100 /*CRYPT_IPSEC_HMAC_KEY*/, ref hKey))
+                {
+                    if (CryptCreateHash(hProv, 0x00008009 /*HMAC*/, hKey, 0, ref hHash))
+                    {
+                        if (CryptSetHashParam(hHash, 0x0005 /*HP_HMAC_INFO*/, hmacInfo, 0))
+                        {
+                            if (CryptHashData(hHash, data, (uint)data.Length, 0))
+                            {
+                                uint bufferSize = 0;
+                                if (CryptGetHashParam(hHash, 0x0002 /*HP_HASHVAL*/, null, ref bufferSize, 0))
+                                {
+                                    byte[] buffer = new byte[bufferSize];
+                                    if (CryptGetHashParam(hHash, 0x0002 /*HP_HASHVAL*/, buffer, ref bufferSize, 0))
+                                    {
+                                        retVal = new byte[Math.Min(buffer.Length, maxLen)];
+                                        Array.Copy(buffer, 0, retVal, 0, Math.Min(buffer.Length, maxLen));
+                                    }
+                                }
+                            }
+                        }
+                        CryptDestroyHash(hHash);
+                    }
+                    CryptDestroyKey(hKey);
+                }
+                CryptReleaseContext(hProv, 0);
+            }
+
+            return retVal;
+        }
+
+        /**
+         * Method for creating PKCS5 PBKDF2 HMAC used with DPAPI masterkeys
+         */
+        public static byte[] getPBKDF2(uint algId, byte[] password, byte[] salt, int iterations, int keyLen, bool isDPAPIInteral = false)
+        {
+            // Return value
+            byte[] retVal = null;
+
+            IntPtr hProv = new IntPtr();
+            IntPtr hHash = new IntPtr();
+
+            if (CryptAcquireContext(ref hProv, null, null, 24 /*PROV_RSA_AES*/, 0xF0000000 /*CRYPT_VERIFYCONTEXT*/))
+            {
+                if (CryptCreateHash(hProv, (uint)algId, IntPtr.Zero, 0, ref hHash))
+                {
+                    if (CryptHashData(hHash, password, (uint)password.Length, 0))
+                    {
+                        uint sHmac = 0;
+                        if (CryptGetHashParam(hHash, 0x0002 /*HP_HASHVAL*/, null, ref sHmac, 0))
+                        {
+                            byte[] buffer = new byte[keyLen];
+
+                            int keyPos = 0;
+                            for (uint count = 1; keyLen > 0; count++)
+                            {
+                                // Create a new salt
+                                MemoryStream asalt = new MemoryStream();
+                                asalt.Write(salt, 0, salt.Length);
+                                byte[] countSize = BitConverter.GetBytes((uint)count);
+                                Array.Reverse(countSize);
+                                asalt.Write(countSize, 0, 4);
+                                byte[] bAsalt = asalt.ToArray();
+
+                                // Get the first HMAC
+                                byte[] d1 = getHMAC(algId, password, bAsalt);
+
+                                // Copy the result to new buffer
+                                byte[] obuf = new byte[d1.Length];
+                                Array.Copy(d1, 0, obuf, 0, d1.Length);
+
+                                // Get new HMAC based to this one as many times as requested
+                                for (int i = 1; i < iterations; i++)
+                                {
+                                    d1 = getHMAC(algId, password, d1);
+                                    for (int j = 0; j < sHmac; j++)
+                                    {
+                                        obuf[j] ^= d1[j];
+                                    }
+                                    if (isDPAPIInteral)
+                                    {
+                                        Array.Copy(obuf, 0, d1, 0, sHmac);
+                                    }
+                                }
+
+                                // This is for scenario, where the requested key is longer than the HMAC value
+                                int r = Math.Min((int)keyLen, (int)sHmac);
+                                Array.Copy(obuf, 0, buffer, keyPos, r);
+                                keyPos += r;
+                                keyLen -= r;
+
+                            }
+
+                            retVal = buffer;
+                        }
+                    }
+                    CryptDestroyHash(hHash);
+                }
+                CryptReleaseContext(hProv, 0);
+            }
+
+            return retVal;
+        }
+
+        /**
+         * Utility function to calculate PBKDF2
+         */
+
+        public static byte[] getPBKDF2(byte[] password,byte[] salt = null, uint iterations = 10000)
+        {
+            IntPtr phAlgorithm;
+            
+            byte[] retVal = new byte[32];
+            uint pwLen = 0;
+            uint sLen = 0;
+
+            if(password != null)
+            {
+                pwLen = (uint)password.Length;
+            }
+            else
+            {
+                throw new Exception("Password cannot be null");
+            }
+
+            if (salt != null)
+            {
+                sLen = (uint)salt.Length;
+            }
+
+            uint status;
+
+            // BCRYPT_ALG_HANDLE_HMAC_FLAG = 0x00000008
+            if ((status = BCryptOpenAlgorithmProvider(out phAlgorithm, "SHA256", null, 8)) == 0)
+            {
+                status = BCryptDeriveKeyPBKDF2(phAlgorithm, password, pwLen, salt, sLen, iterations, retVal, (uint)retVal.Length, 0);
+                
+                BCryptCloseAlgorithmProvider(phAlgorithm, 0);
+            }
+            return retVal;
+        }
 
         /**
          * Utility function to calculate SHA256 from the given data using HMAC flag. Don't ask..

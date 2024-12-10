@@ -1169,7 +1169,7 @@ function Find-PrivateKey
         if($Elevate -and !(Is-System))
         {
             Write-Verbose "Elevating to LOCAL SYSTEM."
-            $cmdToRun = "Set-Location '$PSScriptRoot';. '.\Win32Ntv.ps1';. '.\CommonUtils.ps1'; Find-PrivateKey -Elevate -AsJson"
+            $cmdToRun = "Set-Location '$PSScriptRoot';. '.\Win32Ntv.ps1';. '.\CommonUtils.ps1';. '.\CommonUtils_endpoints.ps1'; Find-PrivateKey -Elevate -AsJson"
             if($KeyName)
             {
                 $cmdToRun += " -KeyName '$KeyName'"
