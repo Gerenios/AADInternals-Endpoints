@@ -75,6 +75,12 @@ function Export-TeamsTokens
     }
     Process
     {
+        # Check that AADInternals is loaded
+        if($AddToCache -and (Get-Module AADInternals) -eq $null)
+        {
+            Throw "AddToCache requires that AADInternals module is loaded"
+        }
+        
         # Set the path if database was not provided, depends on the OS we are running.
         if([string]::IsNullOrEmpty($CookieDatabase))
         {
@@ -102,101 +108,120 @@ function Export-TeamsTokens
         # Test whether the cookie database exists
         if(-not (Test-Path $CookieDatabase))
         {
-            Throw "The Cookie database does not exist: $CookieDatabase"
-        }
+            # Cache didn't exist, try the New Teams Token Broker cache
+            $TBCache = "$env:LOCALAPPDATA\Packages\MSTeams_8wekyb3d8bbwe\LocalCache\Local\Microsoft\TokenBroker\Cache"
+            Write-Warning "The Cookie database does not exist: $CookieDatabase"
+            Write-Warning "Trying New Teams Token Broker cache at $TBCache"
 
-        try
-        {
-            # Parse the database
-            Write-Verbose "Loading and parsing database $CookieDataBase"
-            $parsedDb = Parse-SQLiteDatabase -Data (Get-BinaryContent -Path $CookieDatabase)
-
-            Write-Verbose "Looking for tokens"
-            $access_tokens = [ordered]@{}
-            foreach($page in $parsedDb.Pages)
+            try
             {
-                # Cookies data is stored on Table Leaf
-                if($page.PageType -eq "Table Leaf" -and $page.CellsOnPage -gt 0)
+                $parameters = @{
+                    "CachePath" = $TBCache
+                    "AddToCache" = $AddToCache
+                    "CopyToClipboard" = $CopyToClipboard
+                }
+                return Export-TokenBrokerTokens @parameters
+            }
+            catch
+            {
+                Throw "Unable to export Teams tokens"
+            }
+        }
+        else
+        {
+            try
+            {
+                # Parse the database
+                Write-Verbose "Loading and parsing database $CookieDataBase"
+                $parsedDb = Parse-SQLiteDatabase -Data (Get-BinaryContent -Path $CookieDatabase)
+
+                Write-Verbose "Looking for tokens"
+                $access_tokens = [ordered]@{}
+                foreach($page in $parsedDb.Pages)
                 {
-                    # Which has exactly 19 columns (the last is empty)
-                    if($page.Cells[0].Payload.Count -ge 19)
+                    # Cookies data is stored on Table Leaf
+                    if($page.PageType -eq "Table Leaf" -and $page.CellsOnPage -gt 0)
                     {
-                        Write-Verbose "Found Table Leaf page with $($page.CellsOnPage) cells"
-                        <# Columns - updated Oct 20th 2022
-                         0: creation_utc
-                         1: top_frame_site_key
-                         2: host_key
-                         3: name
-                         4: value
-                         5: encrypted_value
-                         6: path
-                         7: expires_utc
-                         8: is_secure
-                         9: is_httponly
-                        10: last_access_utc
-                        12: has_expires
-                        13: is_persistent
-                        14: priority
-                        15: encrypted_value
-                        16: samesite
-                        17: source_scheme
-                        18: source_port
-                        19: is_same_party
-                        #>
-                        foreach($cell in $page.Cells)
+                        # Which has exactly 19 columns (the last is empty)
+                        if($page.Cells[0].Payload.Count -ge 19)
                         {
-                            $name  = $cell.Payload[3]
-                            $value = $cell.Payload[4]
-
-                            if($name -like "*token*" -or $name -eq "SSOAUTHCOOKIE")
+                            Write-Verbose "Found Table Leaf page with $($page.CellsOnPage) cells"
+                            <# Columns - updated Oct 20th 2022
+                             0: creation_utc
+                             1: top_frame_site_key
+                             2: host_key
+                             3: name
+                             4: value
+                             5: encrypted_value
+                             6: path
+                             7: expires_utc
+                             8: is_secure
+                             9: is_httponly
+                            10: last_access_utc
+                            12: has_expires
+                            13: is_persistent
+                            14: priority
+                            15: encrypted_value
+                            16: samesite
+                            17: source_scheme
+                            18: source_port
+                            19: is_same_party
+                            #>
+                            foreach($cell in $page.Cells)
                             {
-                                # Strip the Bearer= and query parameters from the "authToken"
-                                if($name -eq "authToken")
-                                {
-                                    $value = [System.Net.WebUtility]::UrlDecode($value).Split("=")[1].Split("&")[0]
-                                    $userName = (Read-AccessToken -AccessToken $value).upn
-                                }
+                                $name  = $cell.Payload[3]
+                                $value = $cell.Payload[4]
 
-                                # Add access tokens to cache as needed
-                                if($AddToCache -and $name -ne "skypetoken_asm")
+                                if($name -like "*token*" -or $name -eq "SSOAUTHCOOKIE")
                                 {
-                                    Add-AccessTokenToCache -AccessToken $value | Out-Null
-                                    $cached += 1
+                                    # Strip the Bearer= and query parameters from the "authToken"
+                                    if($name -eq "authToken")
+                                    {
+                                        $value = [System.Net.WebUtility]::UrlDecode($value).Split("=")[1].Split("&")[0]
+                                        $userName = (Read-AccessToken -AccessToken $value).upn
+                                    }
+
+                                    # Add access tokens to cache as needed
+                                    if($AddToCache -and $name -ne "skypetoken_asm")
+                                    {
+                                        Add-AADIntAccessTokenToCache -AccessToken $value | Out-Null
+                                        $cached += 1
+                                    }
+                                    $access_tokens[$name] = $value
                                 }
-                                $access_tokens[$name] = $value
                             }
                         }
                     }
                 }
-            }
 
         
         
-            # Print out the username
-            Write-Host "User: $userName"
+                # Print out the username
+                Write-Host "User: $userName"
 
-            # Print count cached tokens
-            if($AddToCache)
-            {
-                Write-Host "$cached access tokens added to cache"
-            }
+                # Print count cached tokens
+                if($AddToCache)
+                {
+                    Write-Host "$cached access tokens added to cache"
+                }
 
-            # Copy tokens to clipboard and print the count
-            if($CopyToClipboard)
-            {
-                $access_tokens | ConvertTo-Json | Set-Clipboard
-                Write-Host "$($access_tokens.Count) access tokens copied to clipboard"
-            }
+                # Copy tokens to clipboard and print the count
+                if($CopyToClipboard)
+                {
+                    $access_tokens | ConvertTo-Json | Set-Clipboard
+                    Write-Host "$($access_tokens.Count) access tokens copied to clipboard"
+                }
 
-            # Return
-            if(-not $AddToCache -and -not $CopyToClipboard)
-            {
-                return $access_tokens
+                # Return
+                if(-not $AddToCache -and -not $CopyToClipboard)
+                {
+                    return $access_tokens
+                }
             }
-        }
-        catch
-        {
-            Throw $_
+            catch
+            {
+                Throw $_
+            }
         }
     }
 }
@@ -274,9 +299,7 @@ function Export-AzureCliTokens
     {
         # Load system.security assembly
         Add-Type -AssemblyName System.Security
-    }
-    Process
-    {
+
         # Parses the object definition string
         # Sep 29th 2022
         function Parse-ObjectDefinition
@@ -314,6 +337,16 @@ function Export-AzureCliTokens
                 return New-Object -TypeName psobject -Property $attributes
             }
         }
+    }
+    Process
+    {
+        # Check that AADInternals is loaded
+        if($AddToCache -and (Get-Module AADInternals) -eq $null)
+        {
+            Throw "AddToCache requires that AADInternals module is loaded"
+        }
+
+        
 
         # Set the path if database was not provided, depends on the OS we are running.
         if([string]::IsNullOrEmpty($MSALCache))
@@ -402,7 +435,7 @@ function Export-AzureCliTokens
                 
                 if($AddToCache)
                 {
-                    Add-AccessTokenToCache -AccessToken $at_properties.secret -RefreshToken $rt_properties.secret | Out-Null
+                    Add-AADIntAccessTokenToCache -AccessToken $at_properties.secret -RefreshToken $rt_properties.secret | Out-Null
                 }
                 $access_tokens += New-Object psobject -Property $attributes
             }
@@ -487,7 +520,8 @@ function Export-TokenBrokerTokens
     [cmdletbinding()]
     Param(
         [switch]$AddToCache,
-        [switch]$CopyToClipboard
+        [switch]$CopyToClipboard,
+        [string]$CachePath = "$env:LOCALAPPDATA\Microsoft\TokenBroker\Cache"
     )
     Begin
     {
@@ -496,8 +530,14 @@ function Export-TokenBrokerTokens
     }
     Process
     {
+        # Check that AADInternals is loaded
+        if($AddToCache -and (Get-Module AADInternals) -eq $null)
+        {
+            Throw "AddToCache requires that AADInternals module is loaded"
+        }
+
         # Test whether the Token Broker cache exists
-        $TBRES = "$env:LOCALAPPDATA\Microsoft\TokenBroker\Cache\*.tbres"
+        $TBRES = "$CachePath\*.tbres"
         
         if(-not (Test-Path $TBRES))
         {
@@ -514,31 +554,40 @@ function Export-TokenBrokerTokens
             try
             {
                 Write-Verbose "Parsing $file"
-                $data    = Get-BinaryContent -Path $file.FullName
-                $content = Parse-TBRES -Data $data
-
-                if($content.WTRes_Token -ne $null -and $content.WTRes_Token -ne "No Token")
+                try
                 {
-                    $parsedToken = Read-AccessToken -AccessToken $content.WTRes_Token
-                
-                    # Could be JWE which can't be parsed
-                    if($parsedToken)
-                    {
-                        $users[$parsedToken.oid] = $parsedToken.unique_name
+                    $data    = Get-BinaryContent -Path $file.FullName -ErrorAction Stop
+                    $content = Parse-TBRES -Data $data
 
-                        # Form the return object
-                        $attributes = [ordered]@{
-                            "UserName"      = $parsedToken.unique_name
-                            "access_token"  = $content.WTRes_Token
-                        }
+                    if($content.WTRes_Token -ne $null -and $content.WTRes_Token -ne "No Token")
+                    {
+                        $parsedToken = Read-AccessToken -AccessToken $content.WTRes_Token
                 
-                        if($AddToCache)
+                        # Could be JWE which can't be parsed
+                        if($parsedToken)
                         {
-                            Add-AccessTokenToCache -AccessToken $content.WTRes_Token | Out-Null
+                            $users[$parsedToken.oid] = $parsedToken.unique_name
+
+                            # Form the return object
+                            $attributes = [ordered]@{
+                                "UserName"      = $parsedToken.unique_name
+                                "access_token"  = $content.WTRes_Token
+                                "id_token"      = $content.WTRes_PropertyBag.wamcompat_id_token
+                            }
+                
+                            if($AddToCache)
+                            {
+                                Add-AADIntAccessTokenToCache -AccessToken $content.WTRes_Token | Out-Null
+                            }
+                            $access_tokens += [PSCustomObject] $attributes
                         }
-                        $access_tokens += [PSCustomObject] $attributes
                     }
                 }
+                catch
+                {
+                    Write-Verbose "Unable to read file $file"
+                }
+                
             }
             catch
             {

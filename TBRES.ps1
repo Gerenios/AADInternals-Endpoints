@@ -38,7 +38,7 @@ Function Parse-TBRES
 
         if((Get-Date).ToUniversalTime() -ge $expires)
         {
-            Write-Warning "Token is expired"
+            Write-Verbose "Token is expired at $expires, skipping.."
             return 
         }
         

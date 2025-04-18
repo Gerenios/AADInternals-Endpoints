@@ -4,7 +4,7 @@
 	RootModule = 'AADInternals-Endpoints.psm1'
 
 	# Version number of this module.
-	ModuleVersion = '0.9.6'
+	ModuleVersion = '0.9.8'
 
 	# Supported PSEditions
 	# CompatiblePSEditions = @()
@@ -19,7 +19,7 @@
 	CompanyName = 'Gerenios Ltd'
 
 	# Copyright statement for this module
-	Copyright = '(c) 2024 Nestori Syynimaa (@DrAzureAD). Distributed under MIT license.'
+	Copyright = '(c) 2025 Nestori Syynimaa (@DrAzureAD). Distributed under MIT license.'
 
 	# Description of the functionality provided by this module
 	Description = 'The AADInternals-Endpoints PowerShell Module contains functionality to modify and extract information from the endpoints (servers, computers, etc.).

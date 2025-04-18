@@ -258,7 +258,11 @@ function Join-LocalDeviceToAzureAD
         Write-Verbose "TransportKey file name: $($transportKey.UniqueName)"
 
         # Copy the private key to SystemKeys folder & delete from the current location
-        Copy-Item -Path "$env:ALLUSERSPROFILE\Microsoft\Crypto\Keys\$($transportKey.UniqueName)" -Destination "$env:ALLUSERSPROFILE\Microsoft\Crypto\SystemKeys" -Force
+        $systemKeysDir = "$env:ALLUSERSPROFILE\Microsoft\Crypto\SystemKeys"
+        if (-not (Test-Path $systemKeysDir)) {
+            New-Item -ItemType Directory -Path $systemKeysDir -Force | Out-Null
+        }
+        Copy-Item -Path "$env:ALLUSERSPROFILE\Microsoft\Crypto\Keys\$($transportKey.UniqueName)" -Destination "$systemKeysDir\" -Force
         Write-Verbose "Transport key stored to $env:ALLUSERSPROFILE\Microsoft\Crypto\SystemKeys\$($transportKey.UniqueName)"
         $transportKey.Delete()
 
