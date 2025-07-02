@@ -1172,7 +1172,7 @@ function Find-PrivateKey
                             default { throw "Unsupported key blob type" }
                         }
                                                         
-                        if($key.name -eq $transPortKeyName)
+                        if($key.name -eq $KeyName)
                         {
                             Write-Verbose "Key for name $KeyName found!"
                             break
